@@ -11,12 +11,13 @@
 #include <thread>
 #include <mutex>
 #include <future>
+#include <chrono>
+#include <iostream>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 namespace fs = std::filesystem;
-
 // Helper structure for RGBA pixels (a is safe to ignore for this coursework)
 struct rgba_t
 {
@@ -119,29 +120,55 @@ int main()
     
     // 2. MOVE THE THREAD HERE INSIDE MAIN
     std::thread workerThread([&imageFilenames]() {
+        // Set thread count here for benchmarking.
+        const unsigned int NUM_THREADS = 32;
         std::vector<ImageItem> items;
         items.reserve(imageFilenames.size());
 
-        std::vector<std::future<ImageItem>> futures;
-        for (const auto& path : imageFilenames)
-        {
-            futures.push_back(std::async(std::launch::async, [path]() {
-                return ImageItem{ path, filename_to_median(path) };
-            }));
+        auto start = std::chrono::high_resolution_clock::now();
+
+        std::vector<std::thread> workers;
+        std::mutex itemsMutex;
+        size_t totalImages = imageFilenames.size();
+        size_t chunkSize = (totalImages + NUM_THREADS - 1) / NUM_THREADS;
+
+        for (unsigned int t = 0; t < NUM_THREADS; ++t) {
+            size_t startIdx = t * chunkSize;
+            size_t endIdx = std::min(startIdx + chunkSize, totalImages);
+
+            if (startIdx < endIdx) {
+                workers.emplace_back([startIdx, endIdx, &imageFilenames, &items, &itemsMutex]() {
+                    std::vector<ImageItem> localItems;
+                    for (size_t i = startIdx; i < endIdx; ++i) {
+                        localItems.push_back(ImageItem{ imageFilenames[i], filename_to_median(imageFilenames[i]) });
+                    }
+
+                    // Merge local results into main vector safely
+                    std::lock_guard<std::mutex> lock(itemsMutex);
+                    items.insert(items.end(), localItems.begin(), localItems.end());
+                });
+            }
         }
 
-        for (auto& f : futures)
-        {
-            items.push_back(f.get());
+        // Wait for all worker threads to complete
+        for (auto& t : workers) {
+            if (t.joinable()) {
+                t.join();
+            }
         }
 
+        // Sort the collected temperature results
         std::sort(items.begin(), items.end(), [](const ImageItem& a, const ImageItem& b) {
             return a.temperature < b.temperature;
         });
 
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+
+        std::cout << "Threads: " << NUM_THREADS << " | Processing time: " << elapsed.count() << " ms\n";
+
         std::lock_guard<std::mutex> lock(imageMutex);
-        for (size_t i = 0; i < items.size(); ++i)
-        {
+        for (size_t i = 0; i < items.size(); ++i) {
             imageFilenames[i] = items[i].path;
         }
         isSorted = true;
