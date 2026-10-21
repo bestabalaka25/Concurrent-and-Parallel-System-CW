@@ -120,8 +120,8 @@ int main()
     
     // 2. MOVE THE THREAD HERE INSIDE MAIN
     std::thread workerThread([&imageFilenames]() {
-        // Set thread count here for benchmarking.
-        const unsigned int NUM_THREADS = 32;
+        // Set thread count here for benchmarking: 1, 2, 4, 8,  16, 32 etc.
+        const unsigned int NUM_THREADS = 2;
         std::vector<ImageItem> items;
         items.reserve(imageFilenames.size());
 
